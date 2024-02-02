@@ -33,8 +33,8 @@ class DiceGameEnv:
         self.num_dice_available = self.num_dice
         self.turn_start = False
         self.pid = 0
+        self._print_new_player(self.pid)
         self._roll_until_decision()
-        self.print_new_player(self.pid)
         return self._get_state()
 
     def _get_state(self):
@@ -48,36 +48,35 @@ class DiceGameEnv:
         while True:
             roll = self._roll_dice(self.num_dice_available)
             subroll, score, num_scoring = self._get_score(roll)
-            self.print_roll(self.pid, roll, score)
+            self._print_roll(self.pid, roll)
             if num_scoring == self.num_dice_available:
                 # player full rerolls
-                self.print_main_pleine(self.pid)
+                self._print_main_pleine(self.pid, score)
                 self.running_score += score
                 self.num_dice_available = self.num_dice
                 self.turn_start = False
             elif num_scoring == 0:
                 # go to next player
                 self.running_score = 0
-                self.print_scoring(self.pid, self.running_score)
+                self._print_scoring(self.pid, self.running_score)
                 self.num_dice_available = self.num_dice
                 self.turn_start = True
                 self.pid = self._next_player(self.pid)
-                self.print_new_player(self.pid)
+                self._print_new_player(self.pid)
             elif self.scores[self.pid] + self.running_score + score > 10_000:
                 # go to next player and decision point
-                self.print_over_10k(self.pid, self.scores[self.pid] + self.running_score + score)
-                self.running_score += score
+                self._print_over_10k(self.pid, self.scores[self.pid] + self.running_score + score)
                 self.turn_start = True
                 self.pid = self._next_player(self.pid)
-                self.print_new_player(self.pid)
+                self._print_new_player(self.pid)
                 break
             else:
                 # decision point
-                self.running_score += score
                 self.turn_start = False
                 break
 
         self.dice_available = subroll
+        self.score_available = score
 
     def _next_player(self, pid):
         return (pid + 1) % self.num_players
@@ -138,20 +137,24 @@ class DiceGameEnv:
         if self.turn_start:
             if actions[0]:
                 # player full rerolls
+                self._print_full_reroll(self.pid)
                 self.running_score = 0
                 self.num_dice_available = self.num_dice
                 self._roll_until_decision()
             else:
                 # player rerolls all available dice
+                self._print_partial_reroll(self.pid, self.num_dice_available, self.running_score)
                 self._roll_until_decision()
         else:
             num_can_reroll = len(self.dice_available)
             if not any(actions[:num_can_reroll]):
                 # player redeems score
-                self.scores[self.pid] += self.running_score
                 subroll, score, num_scoring = self._get_score(self.dice_available)
+                self.running_score += score
                 self.num_dice_available = self.num_dice_available - num_scoring
-                self.print_scoring(self.pid, self.running_score)
+                self.scores[self.pid] += self.running_score
+                self._print_subroll(self.pid, subroll, score)
+                self._print_scoring(self.pid, self.running_score)
 
                 # check if player won
                 if self.scores[self.pid] == 10_000:
@@ -159,9 +162,9 @@ class DiceGameEnv:
 
                 # check if another player gets eaten
                 equal_pids = find_equal_to(self.scores, self.pid)
-                if len(equal_pids) > 0:
+                if len(equal_pids) > 0 and self.scores[self.pid] != 0:
                     for equal_pid in equal_pids:
-                        self.print_eat(self.pid, equal_pid)
+                        self._print_eat(self.pid, equal_pid)
                         self.scores[equal_pid] = (
                             0 if self.scores[equal_pid] <= 5_000 else 5_000
                         )
@@ -169,14 +172,14 @@ class DiceGameEnv:
                 # go to next player
                 self.turn_start = True
                 self.pid = self._next_player(self.pid)
-                self.print_new_player(self.pid)
+                self._print_new_player(self.pid)
             else:
                 # player rerolls available dice according to actions[:self.num_dice]
                 subroll_to_keep = [dice for dice, flag in zip(self.dice_available, actions[:num_can_reroll]) if flag]
                 subroll, score, num_scoring = self._get_score(subroll_to_keep)
                 self.num_dice_available = self.num_dice_available - num_scoring
                 self.running_score += score
-                self.print_subroll(self.pid, subroll_to_keep, score)
+                self._print_subroll(self.pid, subroll_to_keep, score)
                 self._roll_until_decision()
 
         # keep playing until next decision point
@@ -189,38 +192,46 @@ class DiceGameEnv:
         print(f"Player {self.pid}'s turn")
         print(f"Available dice: {self.dice_available}")
 
-    def print_new_player(self, pid):
+    def _print_new_player(self, pid):
         if self.verbose:
             print(f"============================")
             print(f"Player {pid} is now playing.")
 
-    def print_roll(self, pid, roll, roll_score):
+    def _print_roll(self, pid, roll):
         if self.verbose:
-            print(f"Player {pid} rolled {roll} for {roll_score} points.")
+            print(f"Player {pid} rolled {roll}.")
 
-    def print_scoring(self, pid, score):
+    def _print_scoring(self, pid, score):
         if self.verbose:
             print(
                 f"Player {pid} scored {score} points and now has {self.scores[pid]} points."
             )
 
-    def print_main_pleine(self, pid):
+    def _print_main_pleine(self, pid, score):
         if self.verbose:
-            print(f"Player {pid} got a main pleine.")
+            print(f"Player {pid} got a main pleine for {score} points.")
 
-    def print_over_10k(self, pid, score):
+    def _print_over_10k(self, pid, score):
         if self.verbose:
             print(f"Player {pid} has gone over 10,000 points with {score} points.")
 
-    def print_subroll(self, pid, subroll, subroll_score):
+    def _print_subroll(self, pid, subroll, subroll_score):
         if self.verbose:
             print(
-                f"Player {pid} kept {subroll} for {subroll_score} points."
+                f"Player {pid} kept {flatten(subroll)} for {subroll_score} points."
             )
 
-    def print_eat(self, pid, equal_pid):
+    def _print_eat(self, pid, equal_pid):
         if self.verbose:
             print(f"Player {pid} ate player {equal_pid}.")
+
+    def _print_full_reroll(self, pid):
+        if self.verbose:
+            print(f"Player {pid} is rerolling all available dice.")
+
+    def _print_partial_reroll(self, pid, num_dice, running_score):
+        if self.verbose:
+            print(f"Player {pid} is rerolling {num_dice} dice with {running_score} points.")
 
 # Example of using the environment
 env = DiceGameEnv()
